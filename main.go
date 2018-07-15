@@ -67,7 +67,15 @@ func HandleRequest(ctx context.Context, event events.APIGatewayProxyRequest) (ev
 	if err != nil {
 		return events.APIGatewayProxyResponse{Body: err.Error(), StatusCode: 400}, nil
 	}
-	return events.APIGatewayProxyResponse{Body: string(data), StatusCode: 200}, nil
+	headers := map[string]string{
+		"Access-Control-Allow-Origin":  "*",
+		"Access-Control-Allow-Methods": "*",
+	}
+	return events.APIGatewayProxyResponse{
+		Body:       string(data),
+		StatusCode: 200,
+		Headers:    headers,
+	}, nil
 }
 
 //Get the user from dynamo, verify that the "sub" from the current user matches the "sub" stored in dynamo.  set the company_id
@@ -100,41 +108,56 @@ func (user *User) validateUser(sess *session.Session) (bool, error) {
 		user.Payed = dUser.Payed
 		return true, nil
 	}
-	return false, errors.New("User invalid")
+	grants, err := user.verifyUserGrants(sess)
+	if grants {
+		return true, nil
+	}
+	return false, err
 }
 
 //Check that the user is paid up, and has the correct service tier for the file they're uploading
 func (user *User) verifyUserGrants(sess *session.Session) (bool, error) {
 	svc := s3.New(sess)
-	//Get the objects associated with the user
-	objects, _ := svc.ListObjects(&s3.ListObjectsInput{
-		Bucket:    aws.String("rsmachiner-user-code"),
-		Prefix:    aws.String(user.CompanyID + "/"),
-		Delimiter: aws.String("/"),
-	})
-	var totalSize int64
-	for _, object := range objects.Contents {
-		size := *object.Size
-		totalSize += size
+	totalSize := user.calculateObjectSize(svc)
+	var maxSize int64
+	switch user.ServiceTier {
+	case 0:
+		maxSize = 10000000 //10MB Free Tier
+	case 1:
+		maxSize = 40000000000 //40GB
+	case 2:
+		maxSize = 1000000000000 //1TB
+	default:
+		maxSize = 10000000 //Default to free tier
 	}
 	if user.ServiceTier == 0 {
-		if user.FileSize > 10000000 {
-			return false, errors.New("File size exceeded tier limit")
-		}
-		if len(objects.Contents) > 5 {
-			return false, errors.New("Number of files in tier exceeded")
-		}
-		return true, nil
-	} else if user.ServiceTier == 1 {
-
-		if totalSize >= 42949672960 || totalSize+int64(user.FileSize) > 42949672960 { // more than 40GB of data
+		if totalSize >= maxSize || totalSize+int64(user.FileSize) > maxSize {
 			return false, errors.New("Maximum amount of stored data exceeded")
 		}
 		return true, nil
-	} else if user.ServiceTier == 2 {
-
 	}
 	return false, nil
+}
+
+//calculate the total space in bytes a user/company is using
+func (user *User) calculateObjectSize(svc *s3.S3) int64 {
+	inputparams := &s3.ListObjectsInput{
+		Bucket:    aws.String(os.Getenv("BUCKET")),
+		Prefix:    aws.String(user.CompanyID + "/"),
+		Delimiter: aws.String("/"),
+	}
+	pageNum := 0
+	var totalSize int64
+	svc.ListObjectsPages(inputparams, func(page *s3.ListObjectsOutput, lastPage bool) bool {
+		log.Println("PAGE: ", pageNum)
+		pageNum++
+		for _, value := range page.Contents {
+			size := *value.Size
+			totalSize += size
+		}
+		return true //return if we should continue to the next page
+	})
+	return totalSize
 }
 
 //Create the signed url using the company id
@@ -144,7 +167,7 @@ func (user *User) signURLForUser(sess *session.Session) (string, error) {
 		Bucket: aws.String("rsmachiner-user-code"),
 		Key:    aws.String(user.CompanyID + "/" + user.FileRequest),
 	})
-	str, err := req.Presign(5 * time.Minute)
+	str, err := req.Presign(time.Minute * 60 * 24 * 5) //Expire in 5 days
 	if err != nil {
 		return "", err
 	}
