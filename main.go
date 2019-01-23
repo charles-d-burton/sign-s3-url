@@ -54,6 +54,7 @@ func HandleRequest(ctx context.Context, event events.APIGatewayProxyRequest) (ev
 		}
 	}
 	url, err := user.signURLForUser(sess)
+	log.Println("Signed URL: " + url)
 	if url == "" || err != nil {
 		if err != nil {
 			return events.APIGatewayProxyResponse{Body: err.Error(), StatusCode: 400}, nil
@@ -102,16 +103,20 @@ func (user *User) validateUser(sess *session.Session) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	if dUser.Sub == user.Sub {
-		user.CompanyID = dUser.CompanyID
-		user.ServiceTier = dUser.ServiceTier
-		user.Payed = dUser.Payed
-		return true, nil
-	}
+	//if dUser.Sub == user.Sub {
+	user.CompanyID = dUser.CompanyID
+	user.ServiceTier = dUser.ServiceTier
+	user.Payed = dUser.Payed
+	log.Println(user)
 	grants, err := user.verifyUserGrants(sess)
-	if grants {
+	if err != nil {
+		return false, err
+	}
+	if grants && user.Payed {
 		return true, nil
 	}
+	//}
+
 	return false, err
 }
 
@@ -131,6 +136,11 @@ func (user *User) verifyUserGrants(sess *session.Session) (bool, error) {
 		maxSize = 10000000 //Default to free tier
 	}
 	if user.ServiceTier == 0 {
+		if totalSize >= maxSize || totalSize+int64(user.FileSize) > maxSize {
+			return false, errors.New("Maximum amount of stored data exceeded")
+		}
+		return true, nil
+	} else if user.ServiceTier == 2 {
 		if totalSize >= maxSize || totalSize+int64(user.FileSize) > maxSize {
 			return false, errors.New("Maximum amount of stored data exceeded")
 		}
