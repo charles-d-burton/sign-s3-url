@@ -138,7 +138,7 @@ func (user *User) verifyUserGrants(sess *session.Session) (bool, error) {
 	if totalSize >= maxSize || totalSize+int64(user.FileSize) > maxSize {
 		return false, errors.New("Maximum amount of stored data exceeded")
 	}
-	return false, nil
+	return true, nil
 }
 
 //calculate the total space in bytes a user/company is using
