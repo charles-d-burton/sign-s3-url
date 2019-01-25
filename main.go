@@ -135,16 +135,8 @@ func (user *User) verifyUserGrants(sess *session.Session) (bool, error) {
 	default:
 		maxSize = 10000000 //Default to free tier
 	}
-	if user.ServiceTier == 0 {
-		if totalSize >= maxSize || totalSize+int64(user.FileSize) > maxSize {
-			return false, errors.New("Maximum amount of stored data exceeded")
-		}
-		return true, nil
-	} else if user.ServiceTier == 2 {
-		if totalSize >= maxSize || totalSize+int64(user.FileSize) > maxSize {
-			return false, errors.New("Maximum amount of stored data exceeded")
-		}
-		return true, nil
+	if totalSize >= maxSize || totalSize+int64(user.FileSize) > maxSize {
+		return false, errors.New("Maximum amount of stored data exceeded")
 	}
 	return false, nil
 }
